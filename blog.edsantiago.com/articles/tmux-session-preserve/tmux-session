@@ -1,0 +1,533 @@
+#!/usr/bin/perl
+#
+# tmux-session - convenience wrappers for tmux
+#
+# $Id: tmux-session,v 1.1 2011/01/04 22:58:08 esm Exp esm $
+#
+package Tmux::Session;
+
+use strict;
+use warnings;
+
+(our $ME = $0) =~ s|.*/||;
+(our $VERSION = '$Revision: 1.1 $ ') =~ tr/[0-9].//cd;
+
+# For debugging, show data structures using DumpTree($var)
+#use Data::TreeDumper; $Data::TreeDumper::Displayaddress = 0;
+
+use IPC::Run                    qw(run timeout);
+use List::Util                  qw(max);
+
+###############################################################################
+# BEGIN user-customizable section
+
+# Will be set in the 'actions' block below
+our @actions;
+
+# END   user-customizable section
+###############################################################################
+
+###############################################################################
+# BEGIN boilerplate args checking, usage messages
+
+sub usage {
+    # Special case: --help for a particular action
+    if (@ARGV) {
+        my $action = _find_action($ARGV[0]);
+        printf <<"END_USAGE";
+Usage: $ME $action->{name} $action->{args}
+
+$action->{desc}
+END_USAGE
+        exit;
+    }
+
+    print  <<"END_USAGE";
+Usage: $ME [OPTIONS] ARGS [...]
+
+blah blah blah
+
+ACTIONS:
+
+END_USAGE
+
+    my $maxlen = max map { length($_->{name}) } @actions;
+
+    for my $action (@actions) {
+        printf "  %-*s  %s\n", $maxlen, $action->{name}, $action->{blurb};
+    }
+    print <<"END_USAGE";
+
+OPTIONS:
+
+  -v, --verbose  show verbose progress indicators
+  -n, --dry-run  make no actual changes
+
+  --help         display this message
+  --man          display program man page
+  --version      display program name and version
+END_USAGE
+
+    exit;
+}
+
+sub man {
+    # Read the POD contents.  If it hasn't been filled in yet, abort.
+    my $pod = do { local $/; <DATA>; };
+    if ($pod =~ /=head1 \s+ NAME \s+ FIXME/xm) {
+        warn "$ME: No man page available.  Please try $ME --help\n";
+        exit;
+    }
+
+    # Use Pod::Man to convert our __DATA__ section to *roff
+    eval { require Pod::Man }
+        or die "$ME: Cannot generate man page; Pod::Man unavailable: $@\n";
+    my $parser = Pod::Man->new(name => $ME, release => $VERSION, section => 1);
+
+    # If called without output redirection, man-ify.
+    my $out_fh;
+    if (-t *STDOUT) {
+        my $pager = $ENV{MANPAGER} || $ENV{PAGER} || 'less';
+        open $out_fh, "| nroff -man | $pager";
+    }
+    else {
+        open $out_fh, '>&STDOUT';
+    }
+
+    # Read the POD contents, and have Pod::Man read from fake filehandle.
+    # This requires 5.8.0.
+    open my $pod_handle, '<', \$pod;
+    $parser->parse_from_filehandle($pod_handle, $out_fh);
+    exit;
+}
+
+
+# Command-line options.  Note that this operates directly on @ARGV !
+our $debug   = 0;
+our $force   = 0;
+our $verbose = 0;
+our $NOT     = '';              # print "blahing the blah$NOT\n" if $debug
+sub handle_opts {
+    use Getopt::Long;
+    GetOptions(
+        'debug!'     => \$debug,
+        'dry-run|n!' => sub { $NOT = ' [NOT]' },
+        'force'      => \$force,
+        'verbose|v'  => \$verbose,
+
+        help         => \&usage,
+        man          => \&man,
+        version      => sub { print "$ME version $VERSION\n"; exit 0 },
+    ) or die "Try `$ME --help' for help\n";
+}
+
+# END   boilerplate args checking, usage messages
+###############################################################################
+# BEGIN actions
+#
+# Actions are in @actions.  Each action is a hash containing a name (what
+# the user will type), a short description (for --help), a long description
+# (for full --help) and a CODE ref.
+#
+
+push @actions, {
+    name  => 'list',
+    blurb => 'list active sessions and windows',
+    args  => '',
+    desc  => <<'END_DESC',
+FIXME
+END_DESC
+    code  => sub {
+        @_ == 0
+            or die "$ME: This command takes no arguments\n";
+
+        # FIXME: include panes
+        # FIXME: remove whitespace?
+        # FIXME: include window index as well as names?
+        my $info = tmux_server_info();
+
+        # Pass 1: maxlen
+        my %maxlen = (sess => -1, win => [ (-1) x 100 ]);
+        for my $session (@{ $info->{sessions} }) {
+            $maxlen{sess} = max( $maxlen{sess}, length($session->{name}) );
+
+            for my $i (0 .. $#{ $session->{windows} }) {
+                if (my $window = $session->{windows}->[$i]) {
+                    $maxlen{win}[$i]
+                        = max( ($maxlen{win}[$i]||0), length($window->{name}) );
+                }
+            }
+        }
+
+
+        for my $session (@{ $info->{sessions} }) {
+            printf "%-*s >", $maxlen{sess}, $session->{name};
+
+            for my $i (0 .. $#{ $session->{windows} }) {
+                if (my $window = $session->{windows}->[$i]) {
+                    printf " %d:%-*s", $i, $maxlen{win}[$i], $window->{name};
+                    # FIXME: panes?  That would require a new maxlen
+                }
+                else {
+                    print ' ' x ($maxlen{win}[$i] + length($i) + 2);
+                }
+            }
+            print  "\n";
+        }
+    }
+};
+
+
+###############################################################################
+
+push @actions, {
+    name  => 'mywindowid',
+    blurb => 'output the name of the window which invoked this script',
+    args  => '',
+    desc  => <<"END_DESC",
+This is used in bash scripts to determine an ID for the window
+in which this command is being run.
+
+Result will be printed to stderr, and will be of the form:
+
+   <session>.<window>[.<pane>]
+eg  main.cpan
+    devel.bz12345.1   (.0 never shows as a pane, only .1 and up)
+
+If invoked from outside a tmux session, $ME emits
+an empty string but exits 0 (success).
+END_DESC
+    code  => sub {
+        @_ == 0
+            or die "$ME: This command takes no arguments\n";
+
+        # Name of current tty.  If not a tty, bail out now
+        chomp(my $tty = qx{tty});
+        die "$ME: $tty\n"               if $? != 0;
+
+        my $info = tmux_server_info();
+        for my $session (@{ $info->{sessions} }) {
+            for my $window (@{ $session->{windows} }) {
+                for my $pane (@{ $window->{panes} }) {
+                    if ($pane->{tty} eq $tty) {
+                        print $session->{name}, ".";
+                        if ($window->{name} eq 'bash') {
+                            print $window->{num};
+                        }
+                        else {
+                            print $window->{name};
+                        }
+
+                        if ($pane->{num} ne '0') {
+                            print '.', $pane->{num};
+                        }
+
+                        print  "\n";
+                        return;
+                    }
+                }
+            }
+        }
+    }
+};
+
+###############################################################################
+
+push @actions, {
+    name  => 'new-window',
+    blurb => q(create a named window (including session) if it doesn't exist),
+    args  => '',
+    desc  => <<"END_DESC",
+This can be run by hand or from .xsession
+END_DESC
+    code  => sub {
+        @_
+            or die "$ME: This command requires at least one session.window\n";
+
+        my @want;
+
+        # Pass 1: validity check on session.window names
+        for my $name (@_) {
+            # FIXME: if run from a session, use that
+            $name =~ /^(\w+)\.([\w-]+)$/
+                or die "$ME: Invalid session name '$name'; must be <xxx>.<yyy>\n";
+            push @want, [ $1, $2 ];
+        }
+
+        # Pass 2: create sessions as needed
+        for my $pair (@want) {
+            my ($session, $window) = @$pair;
+
+            _create_window(  $session, $window );
+        }
+    }
+};
+
+sub _create_window {
+    my $desired_session = shift;
+    my $desired_window  = shift;
+
+    my $session_exists;
+
+    # FIXME: what if tmux hasn't been started?
+    my $info = tmux_server_info();
+    for my $session (@{ $info->{sessions} }) {
+        if ($session->{name} eq $desired_session) {
+            # This is the desired session.  Now look for desired window.
+            for my $i (0 .. $#{ $session->{windows} }) {
+                if (my $window = $session->{windows}->[$i]) {
+                    if ($window->{name} eq $desired_window) {
+                        # This is the desired window.  Bail out.
+                        return;
+                    }
+                }
+                elsif (! defined $session_exists) {
+                    # e.g. we have window 0, 1, 3.  Create new window @ 2.
+                    $session_exists = $i;
+                }
+            }
+
+            # No gaps between windows.  Use the next highest number.
+            if (! defined $session_exists) {
+                $session_exists = @{$session->{windows}};
+            }
+        }
+    }
+
+    # Window not found.
+    # Command to run depends on whether the session exists or not
+    my @cmd = ('tmux');
+    if (defined $session_exists) {
+        push @cmd, 'new-window', '-t' => "$desired_session:$session_exists";
+    }
+    else {
+        push @cmd, 'new-session', '-d', '-s' => $desired_session,
+    }
+    # -n option is the same for both
+    push @cmd, '-n' => $desired_window;
+    print "@cmd$NOT\n"                          if $verbose || $NOT;
+
+    unless ($NOT) {
+        system(@cmd) == 0
+            or die "$ME: command failed: @cmd\n";
+    }
+}
+
+
+# END   actions
+###############################################################################
+
+############################## CODE BEGINS HERE ###############################
+
+# The term is "modulino".
+__PACKAGE__->main()                                     unless caller();
+
+# Main code.
+sub main {
+    # Note that we operate directly on @ARGV, not on function parameters.
+    # This is deliberate: it's because Getopt::Long only operates on @ARGV
+    # and there's no clean way to make it use @_.
+    handle_opts();                      # will set package globals
+
+    # Fetch the desired action.
+    my $action = _find_action( shift @ARGV );
+
+    # Invoke the handler code
+    $action->{code}->( @ARGV );
+}
+
+
+##################
+#  _find_action  #  Given a (possibly abbrvtd) action name, return full info
+##################
+sub _find_action {
+    my $abbr = shift;                   # in: possibly-abbreviated action name
+
+    # Invoked without an argument?
+    die "$ME: Missing ACTION argument; try $ME --help\n"        if !$abbr;
+
+    # Try various ways to match: exact, match at start, match anywhere.
+    # If any of those is ambiguous, we must barf.
+    for my $re (qr/^$abbr$/i, qr/^$abbr/i, qr/$abbr/i) {
+        my @match = grep { $_->{name} =~ /$re/ } @actions;
+        return $match[0]            if @match == 1;
+
+        if (@match > 1) {
+            my $x = join(', ', map { $_->{name} } @match);
+            die "$ME: '$abbr' is ambiguous: matches $x\n";
+        }
+    }
+
+    die "$ME: No match for action '$abbr'.  Try $ME --help\n";
+}
+
+
+###############################################################################
+# BEGIN helper code
+
+sub tmux_server_info {
+    my $info = {};
+
+    #
+    # tmux server-info spits out a lot of output.  Here's sample
+    # output (condensed) for a simple case: one session, two windows.
+    #
+    #   tmux 1.3, pid 1821, started Wed Dec 15 11:53:55 2010
+    #   ...
+    #   Clients:
+    #   ...
+    #   Sessions: [5/10]
+    #    0: mysess: 2 windows (created Wed Dec 15 11:53:55 2010) [80x59] [flags=0x0, references=0]
+    #      0: w1 [80x59] [flags=0x0, references=1, last layout=-1]
+    #        0: /dev/pts/52 1822 13 74/79, 12175 bytes; UTF-8 0/79, 0 bytes
+    #      1: w2 [80x59] [flags=0x0, references=1, last layout=-1]
+    #        0: /dev/pts/53 3122 14 1/59, 25 bytes; UTF-8 0/59, 0 bytes
+    #   ...
+    #   Terminals:
+    #
+    my ($stdout, $stderr);
+
+    my @cmd = qw(tmux server-info);
+    print "@cmd\n"                                                      if $verbose;
+    my $status = run \@cmd, \undef, \$stdout, \$stderr, timeout(30);
+
+    if ($?) {
+        #               (tmux 1.3)       (tmux 1.4)
+        if ($stderr =~ /server not found|failed to connect to server/) {
+            return { sessions => [] };
+        }
+        die "$ME: command failed: @cmd\n";
+    }
+
+    my $section = '<none>';
+    my $current_session;
+    my $current_window;
+    open TMUX, '<', \$stdout
+        or die "$ME: internal error reading from string: $!";
+
+  LINE:
+    while (<TMUX>) {
+        if (/^([A-Z][a-z]+):/) {
+            $section = lc $1;
+            $info->{$section} = [];
+            next LINE;
+        }
+
+        if ($section eq 'sessions') {
+            # We're in the 'Sessions' part of tmux output.
+            # Parse by regex, not by indentation.
+            if (/^\s+(\d+):\s+(.*?):\s+\d+\s+windows/) {
+                $current_session = $1;
+                $info->{$section}->[$1] = {
+                    num     => $1,
+                    name    => $2,
+                    windows => [],
+                };
+            }
+
+            elsif (/^\s+(\d+):\s+(.*?)\s+\[\d+x\d+\]\s+\[/) {
+                $current_window = $1;
+                $info->{$section}->[$current_session]->{windows}->[$1] = {
+                    num    => $1,
+                    name   => $2,
+                    panels => [],
+                };
+            }
+            elsif (m!^\s+(\d+):\s+(/dev/\S+)\s+\d+!) {
+                $info->{$section}->[$current_session]->{windows}->[$current_window]->{panes}->[$1] = {
+                    num => $1,
+                    tty => $2,
+                }
+            }
+        }
+    }
+    close TMUX;
+
+
+    #print DumpTree($info);
+    return $info;
+}
+
+# END   helper code
+###############################################################################
+
+1;
+
+__DATA__
+
+###############################################################################
+#
+# Documentation
+#
+
+=head1	NAME
+
+FIXME - description of what this script does
+
+=head1	SYNOPSIS
+
+FIXME [B<--foo>]  [B<--bar>]  [B<--verbose>] ARG1 [ARG2...] FIXME
+
+FIXME  B<--help>  |  B<--version> | B<--man>
+
+=head1	DESCRIPTION
+
+B<FIXME> grobbles the frobniz on alternate Tuesdays, except where
+prohibited by law.
+
+=head1	OPTIONS
+
+=over 4
+
+=item B<--foo>
+
+FIXME
+
+=item B<--verbose>
+
+Show progress messages.
+
+=item B<--help>
+
+Emit usage hints.
+
+=item B<--version>
+
+Display program version.
+
+=item B<--man>
+
+Display this man page.
+
+=back
+
+
+=head1	DIAGNOSTICS
+
+FIXME
+
+=head1	ENVIRONMENT
+
+FIXME
+
+=head1	FILES
+
+FIXME
+
+=head1	RESTRICTIONS
+
+FIXME
+
+=head1	SEE ALSO
+
+FIXME
+
+e.g. L<Foo::Bar|Foo::Bar>
+
+=head1	AUTHOR
+
+Your Name <ed@edsantiago.com>
+
+Please report bugs or suggestions to <ed@edsantiago.com>
+
+=cut

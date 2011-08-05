@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+<meta name="generator" content=
+"HTML Tidy for Linux (vers 6 November 2007), see www.w3.org" />
+<meta http-equiv="Content-Type" content=
+"application/xhtml+xml; charset=utf-8" />
+<meta name="generator" content="NanoBlogger 3.3" />
+<title>Preserving (some) session state with tmux and bash |
+Ed</title>
+<link rel="stylesheet" href="../../styles/nb_ed.css" type=
+"text/css" media="all" />
+<link rel="stylesheet" href="../../styles/print.css" type=
+"text/css" media="print" />
+<link rel="shortcut icon" href="../../images/favicon.ico" />
+</head>
+<body>
+<div id="container" class="clearfix">
+<div id="header" class="clearfix">
+<h1><a href="../../" accesskey="1">Ed</a></h1>
+<span class="description">Food. Books. Linux. Yoga. Travel. All
+made boring by Ed.</span></div>
+<div id="altcontent">
+<div id="wrap"><a id="top"></a>
+<h2>Preserving (some) session state with tmux and bash</h2>
+<div id="menu"><a href="../../">Main</a></div>
+<div class="pages">
+<p><b>December 15, 2010</b>. This describes some preliminary work
+I'm doing to make reboots less painful by preserving some session
+state using tmux and bash. The preserved state is <b>working
+directory</b> and <b>command history</b>. Better that nothing.</p>
+<h3>The Problem</h3>
+<p>I work by physical context. Usually between 10 and 30 xterms
+running at once, in different virtual spaces across several
+monitors. Each of those used to run <tt>gnu&#160;screen</tt>, but
+I'm now (December 2010) starting to switch to <a href=
+"http://tmux.sourceforge.net/">tmux</a>. Anyhow, the point is that
+location matters: each xterm is in its proper place, and that's how
+I organize my work and remember what I'm working on.</p>
+<p>Reboots are infrequent, but they happen. Reboots cost me hours
+of lost work. This article describes some tricks I'm playing with
+to preserve the most important part of my context: <b>working
+directory</b> and <b>command history</b>. This is a work in
+progress.</p>
+<h3>Overview</h3>
+<p>The key players are <b>tmux</b> and <b>bash</b>. And the key
+concept is a <b>per-window history file</b> ("window" in the sense
+of tmux windows). What I care about most is my bash history and my
+current list of directories (pushd/popd) in a given window. This
+article provides a way to preserve that across reboots, and
+reestablish enough of a working context to save me a few hours.</p>
+<p>Let's say I have two xterms, <tt><b>l</b></tt> and
+<tt><b>r</b></tt> (for left and right). Each of those is running a
+tmux session, and each of those sessions has four tmux windows:</p>
+<pre>
+                 l                                    r
+    +---------------------------+        +---------------------------+
+    |                           |        |                           |
+    |                           |        |                           |
+    |                           |        |                           |
+    |                           |        |                           |
+    |                           |        |                           |
+    |                           |        |                           |
+    |                           |        |                           |
+    |                           |        |                           |
+    |                           |        |                           |
+    |                           |        |                           |
+    |  0:root 1:w1  2:n  3:x    |        | 0:root 1:cpan 2:foo 3:y   |
+    +---------------------------+        +---------------------------+
+</pre>
+<p>In my workflow, the window names are pretty constant. So I
+address the above as <tt><b>l.root</b></tt>, <tt><b>l.w1</b></tt>,
+and so on. Note that <tt><b>l</b>.root</tt> and
+<tt><b>r</b>.root</tt> are distinct.</p>
+<p>Here comes a 2-hour power outage, or an upgrade to a new kernel.
+On reboot, I can get my sessions back via these commands from my
+<tt>.xsession</tt>:</p>
+<pre>
+  <kbd>tmux-session new <var>l.root l.w1   l.n   l.x</var></kbd>
+  <kbd>tmux-session new <var>r.root r.cpan r.foo r.y</var></kbd>
+</pre>
+<p>Those are permanent windows in my setup. If I had been working
+on a temporary window at the time of the crash, and the window was
+called <tt>devel.bz123456</tt>, I could restore it from any shell
+by typing:</p>
+<pre>
+   $ <kbd>tmux-session new <var>devel.bz123456</var></kbd>
+</pre>
+<p>When each of those windows comes up, it will:</p>
+<ul>
+<li>be cd'ed to the same place as when the window closed;</li>
+<li>have the same directory stack (pushd); and</li>
+<li>have the command history for that exact window.</li>
+</ul>
+<p>It's not perfect: terminal output and scrollback is lost, and so
+is environment. But it's good enough for me, for now.</p>
+<hr />
+<h3>How It Works</h3>
+<p>Your <tt>.bashrc</tt>, asks <tt>tmux</tt> "what's my window
+name?" If tmux gives the right kind of answer, bash sets a custom
+<tt>$HISTFILE</tt> for this shell. And that's really about it.</p>
+<h3>Make It Happen</h3>
+<p>Download <a href=".bashrc.tmux"><tt>.bashrc.tmux</tt></a> (login
+dotfile) and <a href="tmux-session"><tt>tmux-session</tt></a> (perl
+script). Put the dotfile in your home directory and the script in
+your $PATH.</p>
+<p>Add this to your <tt>.bash_profile</tt> if you have one;
+otherwise add it to whatever dotfile runs on login shells:</p>
+<pre>
+if [ ! -z "$PS1" ]; then
+    _tmuxrc="$HOME/.bashrc.tmux"
+    if [ -e $_tmuxrc ]; then
+        source $_tmuxrc
+        _tmux-init-history
+    fi
+fi
+</pre>
+<p>Then quit all your tmux sessions and start some new ones using
+<tt>tmux-session&#160;new</tt>. (You can do them by hand, or
+differently, later. For now just follow what I say):</p>
+<pre>
+$ <kbd>mkdir --mode=0700 ~/.bash_history.d</kbd>
+
+$ <kbd>tmux-session new aaa.bbb aaa.ccc</kbd>
+$ <kbd>tmux attach aaa</kbd>
+</pre>
+<p>You're now in tmux with two windows. Swap between them, type
+some commands. Change directories. Exit. That wraps up your tmux
+session. Then <b>repeat</b> the last two commands. Do some
+up-arrows, a <tt>pwd</tt>. You're back in the same place, sort
+of.</p>
+<hr />
+<h3>Further Reading</h3>
+<p>Read the source. Enjoy.</p>
+<p>Also left as an exercise for the reader:</p>
+<ul>
+<li>Using PROMPT_COMMAND to flush history after each command (e.g.
+to survive crashes).</li>
+<li>Finding a way to handle new windows created via ESC-c (which
+will be called "bash" by default).</li>
+<li>Handling window renames (probably via .logout)</li>
+</ul>
+<hr />
+<p>Created: 2010 December 15<br />
+Last updated: 2010 December 16.</p>
+</div>
+</div>
+</div>
+</div>
+<div id="footer" style="clear:both;">
+<div class="menu"><a href="#top">/\</a><br /></div>
+</div>
+</body>
+</html>
