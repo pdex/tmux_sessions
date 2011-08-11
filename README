@@ -1,1 +1,7 @@
 tmux session scripts, pilfered from: http://blog.edsantiago.com/articles/tmux-session-preserve/
+
+TODO
+ * Using PROMPT_COMMAND to flush history after each command (e.g. to survive crashes).
+  * (I think this might be done?)
+ * Finding a way to handle new windows created via ESC-c (which will be called "bash" by default).
+ * Handling window renames (probably via .logout)
