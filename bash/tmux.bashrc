@@ -2,7 +2,7 @@
 #
 # .bashrc.tmux - tmux-related functions and aliases for bash
 #
-# This is part of: http://blogs.edsantiago.com/articles/FIXME
+# This is part of: http://blog.edsantiago.com/articles/tmux-session-preserve/
 #
 
 
