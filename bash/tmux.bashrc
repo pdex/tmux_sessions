@@ -24,6 +24,9 @@ _tmux-init-history() {
         [0-9]*)   return ;;
     esac
 
+    if [ ! -d $HOME/.bash_history.d ]; then
+        mkdir --mode=0700 $HOME/.bash_history.d
+    fi
     histfile=$HOME/.bash_history.d/$tmux_session
 
     # Create the file on demand
