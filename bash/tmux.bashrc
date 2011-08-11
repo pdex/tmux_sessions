@@ -5,7 +5,10 @@
 # This is part of: http://blog.edsantiago.com/articles/tmux-session-preserve/
 #
 
-
+# we're not interactive, don't source me bro!
+if [ -z "$PS1" ]; then
+    return
+fi
 
 #
 # On LOGIN: enable a separate history file for this session
@@ -115,3 +118,6 @@ tmux-rename() {
     tmux_session=$(tmux-session mywindowid)
     HISTFILE=$HOME/.bash_history.d/$tmux_session
 }
+
+#do the initial setup
+_tmux-init-history
