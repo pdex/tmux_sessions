@@ -65,6 +65,7 @@ _tmux-init-history() {
     fi
 
     # Save history after every command.  This saves our bacon if we crash.
+    # FIXME this could be improved, maybe with trap DEBUG or accept-line?
     if [ -n "$PROMPT_COMMAND" ]; then
         PROMPT_COMMAND="$PROMPT_COMMAND;history -w"
     else
