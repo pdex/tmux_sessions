@@ -95,9 +95,9 @@ _tmux-save-dir-stack() {
     fi
 }
 
-P()   { builtin pushd "$@"; _tmux-save-dir-stack; }
-p()   { builtin  popd "$@"; _tmux-save-dir-stack; }
-cd()  { builtin    cd "$@"; _tmux-save-dir-stack; }
+pushd() { builtin pushd "$@"; _tmux-save-dir-stack; }
+popd()  { builtin  popd "$@"; _tmux-save-dir-stack; }
+cd()    { builtin    cd "$@"; _tmux-save-dir-stack; }
 
 #
 # For creating a new session.
