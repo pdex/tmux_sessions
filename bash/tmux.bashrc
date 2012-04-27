@@ -27,10 +27,10 @@ _tmux-init-history() {
         [0-9]*)   return ;;
     esac
 
-    if [ ! -d $HOME/.bash_history.d ]; then
-        mkdir --mode=0700 $HOME/.bash_history.d
+    if [ ! -d $HOME/.tmux-session.d ]; then
+        mkdir --mode=0700 $HOME/.tmux-session.d
     fi
-    histfile=$HOME/.bash_history.d/$tmux_session
+    histfile=$HOME/.tmux-session.d/$tmux_session
 
     # Create the file on demand
     if [ ! -f $histfile ]; then
@@ -116,7 +116,7 @@ tmux-restore() {
 tmux-rename() {
     tmux rename-window "$@"
     tmux_session=$(tmux-session mywindowid)
-    HISTFILE=$HOME/.bash_history.d/$tmux_session
+    HISTFILE=$HOME/.tmux-session.d/$tmux_session
 }
 
 #do the initial setup
