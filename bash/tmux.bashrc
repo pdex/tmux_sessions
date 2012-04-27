@@ -26,11 +26,16 @@ _tmux-init-history() {
     case "$tmux_session" in
         [0-9]*)   return ;;
     esac
+    session_name=$( echo $tmux_session | perl -ne 's/\.\S*// && print' )
+    window_name=$( echo $tmux_session | perl -ne 's/\S*?\.// && print' )
 
     if [ ! -d $HOME/.tmux-session.d ]; then
         mkdir --mode=0700 $HOME/.tmux-session.d
     fi
-    histfile=$HOME/.tmux-session.d/$tmux_session
+    if [ ! -d $HOME/.tmux-session.d/$session_name ]; then
+        mkdir --mode=0700 $HOME/.tmux-session.d/$session_name
+    fi
+    histfile=$HOME/.tmux-session.d/$session_name/$window_name
 
     # Create the file on demand
     if [ ! -f $histfile ]; then
@@ -116,7 +121,7 @@ tmux-restore() {
 tmux-rename() {
     tmux rename-window "$@"
     tmux_session=$(tmux-session mywindowid)
-    HISTFILE=$HOME/.tmux-session.d/$tmux_session
+    HISTFILE=$HOME/.tmux-session.d/$tmux_session #FIXME this is broken with the new directory scheme
 }
 
 #do the initial setup
