@@ -9,7 +9,14 @@
 if [ -z "$PS1" ]; then
     return
 fi
-
+preexec () {
+    echo "$1" > $HISTFILE.running
+}
+preexec_invoke_exec () {
+    [ -n "$COMP_LINE" ] && return  # do nothing if completing
+    local this_command=`history 1 | sed -e "s/^[ ]*[0-9]*[ ]*//g"`;
+    preexec "$this_command"
+}
 #
 # On LOGIN: enable a separate history file for this session
 #
@@ -127,3 +134,4 @@ tmux-rename() {
 
 #do the initial setup
 _tmux-init-history
+trap 'preexec_invoke_exec' DEBUG
